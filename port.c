@@ -77,7 +77,7 @@ void vport_init(struct vport_t *vport, const char *server_ip_str, int server_por
 
     // Vswitch info
     struct sockaddr_in vswitch_addr;
-    memset(&vswitch_addr, 0, sizeof(vswitch_addr))
+    memset(&vswitch_addr, 0, sizeof(vswitch_addr));
     vswitch_addr.sin_family = AF_INET;
     vswitch_addr.sin_port = htons(server_port);
 
@@ -97,12 +97,69 @@ void vport_init(struct vport_t *vport, const char *server_ip_str, int server_por
 
 void *forward_ether_data_to_tap(void *raw_vport) 
 {
+    struct vport_t *vport = (struct vport_t *)raw_vport;
+    char ether_data[ETHER_MAX_LEN];
+    while(true)
+    {
+        int ether_datasz = read(vport->tapfd, ether_data, sizeof(ether_data));
+        if (ether_datasz > 0)
+        {
+            assert(ether_data >= 14);
+            const struct ether_header *hdr = (const struct ether_header *)ether_data;
 
+            ssize_t sendsz = sendto(vport->vport_sockfd, ether_data, ether_datasz, 0, (struct sockaddr *)&vport->vswitch_addr, sizeof(vport->vswitch_addr));
+            if (sendsz != ether_datasz)
+                {
+                    fprintf(stderr, "sendto size mismatch: ether_datasz=%d, sendsz=%d\n", ether_datasz, sendsz);
+                }
+            
+            printf("[VPort] Sent to VSwitch:"
+             " dhost<%02x:%02x:%02x:%02x:%02x:%02x>"
+             " shost<%02x:%02x:%02x:%02x:%02x:%02x>"
+             " type<%04x>"
+             " datasz=<%d>\n",
+             hdr->ether_dhost[0], hdr->ether_dhost[1], hdr->ether_dhost[2], hdr->ether_dhost[3], hdr->ether_dhost[4], hdr->ether_dhost[5],
+             hdr->ether_shost[0], hdr->ether_shost[1], hdr->ether_shost[2], hdr->ether_shost[3], hdr->ether_shost[4], hdr->ether_shost[5],
+             ntohs(hdr->ether_type),
+             ether_datasz);
+        }
+    }
 }
 
 void *forward_ether_data_to_vswitch(void *raw_vport) 
 {
-    
+    struct vport_t *vport = (struct vport_t *)raw_vport;
+    char ether_data[ETHER_MAX_LEN];
+    while (true)
+    {
+        // read ethernet frame from VSwitch
+        socklen_t vswitch_addr = sizeof(vport->vswitch_addr);
+        int ether_datasz = recvfrom(vport->vport_sockfd, ether_data, sizeof(ether_data), 0,
+                                    (struct sockaddr *)&vport->vswitch_addr, &vswitch_addr);
+        if (ether_datasz > 0)
+        {
+            assert(ether_datasz >= 14);
+            const struct ether_header *hdr = (const struct ether_header *)ether_data;
+
+            // forward ethernet frame to TAP device (Linux network stack)
+            ssize_t sendsz = write(vport->tapfd, ether_data, ether_datasz);
+            if (sendsz != ether_datasz)
+            {
+                fprintf(stderr, "sendto size mismatch: ether_datasz=%d, sendsz=%d\n", ether_datasz, sendsz);
+            }
+
+            printf("[VPort] Forward to TAP device:"
+                    " dhost<%02x:%02x:%02x:%02x:%02x:%02x>"
+                    " shost<%02x:%02x:%02x:%02x:%02x:%02x>"
+                    " type<%04x>"
+                    " datasz=<%d>\n",
+                    hdr->ether_dhost[0], hdr->ether_dhost[1], hdr->ether_dhost[2], hdr->ether_dhost[3], hdr->ether_dhost[4], hdr->ether_dhost[5],
+                    hdr->ether_shost[0], hdr->ether_shost[1], hdr->ether_shost[2], hdr->ether_shost[3], hdr->ether_shost[4], hdr->ether_shost[5],
+                    ntohs(hdr->ether_type),
+                    ether_datasz);
+        }
+    }
+
 }
 
 
